@@ -20,40 +20,14 @@ from matplotlib.patches import Rectangle, FancyArrowPatch
 from docx import Document
 from docx.shared import Inches
 import requests
-
-# ==================== 关键补丁：修复 pandas-datareader 在 Python 3.12+ 的兼容性问题 ====================
-# 1. 解决 distutils 缺失（setuptools 已安装，但某些环境仍需手动导入）
-try:
-    from distutils.version import LooseVersion
-except ImportError:
-    # 如果 distutils 不存在，用 packaging.version 替代
-    from packaging.version import Version as LooseVersion
-
-# 2. 解决 deprecate_kwarg 参数错误（pandas 新版本改变了装饰器签名）
-import pandas.util._decorators as decorators
-import functools
-if not hasattr(decorators, 'deprecate_kwarg'):
-    # 手动定义一个兼容的 deprecate_kwarg 装饰器
-    def deprecate_kwarg(old_name, new_name, mapping=None, stacklevel=2):
-        def decorator(fun):
-            @functools.wraps(fun)
-            def wrapper(*args, **kwargs):
-                if old_name in kwargs:
-                    kwargs[new_name] = kwargs.pop(old_name)
-                return fun(*args, **kwargs)
-            return wrapper
-        return decorator
-    decorators.deprecate_kwarg = deprecate_kwarg
-# =====================================================================================
-
-import pandas_datareader as pdr
 from datetime import datetime
 from bs4 import BeautifulSoup
 import qrcode
 import time
 import wave
+import wbdata  # 替代 pandas-datareader
 
-# 导入 cnstats 的尝试（可选，无强制依赖）
+# 尝试导入 cnstats（可选）
 try:
     from cnstats.stats import stats as cn_stats_func
 except ImportError:
@@ -69,7 +43,7 @@ warnings.filterwarnings('ignore')
 warnings.filterwarnings("ignore", category=UserWarning)
 warnings.filterwarnings("ignore", category=FutureWarning)
 
-# API 密钥（务必在云端 Secrets 中配置，不要明文写在这里！）
+# API 密钥（从 st.secrets 读取，兼容本地运行）
 TONGYI_API_KEY = st.secrets.get("TONGYI_API_KEY", "sk-177dec4a885641c78d59b80ce760fc42")
 BAIDU_API_KEY = st.secrets.get("BAIDU_API_KEY", "PkO9bqVFq2FYbMwIeOhMufL7")
 BAIDU_SECRET_KEY = st.secrets.get("BAIDU_SECRET_KEY", "FLqwOluo1nitH340O66CvygthuKfmeim")
@@ -332,11 +306,16 @@ def auto_download_public_data(download_params, data_source):
         indicator_map = {"gdp":"NY.GDP.MKTP.CD","population":"SP.POP.TOTL","cpi":"FP.CPI.TOTL","unemployment":"SL.UEM.TOTL.ZS"}
         indicator = indicator_map.get(data_type, "NY.GDP.MKTP.CD")
         if data_source == "world_bank":
+            # 使用 wbdata 获取世界银行数据
             countries = ["CN", "US", "JP", "DE", "GB"]
-            df = pdr.wb.Data(indicator, countries, start=start, end=end)
-            df = df.reset_index()
-            df = df.pivot(index='year', columns='country', values=indicator)
+            data_date = wbdata.get_dataframe({indicator: indicator}, country=countries, convert_date=False)
+            df = data_date.reset_index()
+            df = df.pivot(index='date', columns='country', values=indicator)
             df.columns = [f"{data_type}_{col}" for col in df.columns]
+            # 将 index 转为年份
+            df.index = pd.to_datetime(df.index).year
+            # 筛选年份范围
+            df = df.loc[start:end]
             return df
         elif data_source == "stats_gov":
             return crawl_stats_gov_yearbook(data_type, start, end, level)

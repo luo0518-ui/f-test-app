@@ -47,8 +47,26 @@ TONGYI_API_KEY = "sk-177dec4a885641c78d59b80ce760fc42"
 BAIDU_API_KEY = "PkO9bqVFq2FYbMwIeOhMufL7"
 BAIDU_SECRET_KEY = "FLqwOluo1nitH340O66CvygthuKfmeim"
 
-plt.rcParams['font.sans-serif'] = ['Microsoft YaHei', 'SimHei', 'DejaVu Sans']
+# ==================== 中文字体设置（增强兼容性） ====================
+# 在 Streamlit Cloud 环境中确保中文正常显示
+try:
+    import matplotlib.font_manager as fm
+    # 查找系统中支持中文的字体
+    chinese_fonts = ['WenQuanYi Zen Hei', 'Noto Sans CJK SC', 'Noto Sans CJK TC', 
+                     'SimHei', 'Microsoft YaHei', 'DejaVu Sans']
+    available_fonts = [f.name for f in fm.fontManager.ttflist]
+    for font in chinese_fonts:
+        if font in available_fonts:
+            plt.rcParams['font.sans-serif'] = [font]
+            break
+    else:
+        # 如果没有找到中文字体，使用默认并添加后备
+        plt.rcParams['font.sans-serif'] = ['DejaVu Sans'] + chinese_fonts
+except:
+    # 如果出错，回退到原有设置
+    plt.rcParams['font.sans-serif'] = ['Microsoft YaHei', 'SimHei', 'DejaVu Sans']
 plt.rcParams['axes.unicode_minus'] = False
+# ================================================================
 
 llm = ChatTongyi(api_key=TONGYI_API_KEY, model_name="qwen-turbo", temperature=0.1)
 

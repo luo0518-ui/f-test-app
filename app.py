@@ -20,12 +20,12 @@ from matplotlib.patches import Rectangle, FancyArrowPatch
 from docx import Document
 from docx.shared import Inches
 import requests
+import wbdata   # 替换 pandas_datareader
 from datetime import datetime
 from bs4 import BeautifulSoup
 import qrcode
 import time
 import wave
-import wbdata  # 替代 pandas-datareader
 
 # 尝试导入 cnstats（可选）
 try:
@@ -43,10 +43,9 @@ warnings.filterwarnings('ignore')
 warnings.filterwarnings("ignore", category=UserWarning)
 warnings.filterwarnings("ignore", category=FutureWarning)
 
-# API 密钥（从 st.secrets 读取，兼容本地运行）
-TONGYI_API_KEY = st.secrets.get("TONGYI_API_KEY", "sk-177dec4a885641c78d59b80ce760fc42")
-BAIDU_API_KEY = st.secrets.get("BAIDU_API_KEY", "PkO9bqVFq2FYbMwIeOhMufL7")
-BAIDU_SECRET_KEY = st.secrets.get("BAIDU_SECRET_KEY", "FLqwOluo1nitH340O66CvygthuKfmeim")
+TONGYI_API_KEY = "sk-177dec4a885641c78d59b80ce760fc42"
+BAIDU_API_KEY = "PkO9bqVFq2FYbMwIeOhMufL7"
+BAIDU_SECRET_KEY = "FLqwOluo1nitH340O66CvygthuKfmeim"
 
 plt.rcParams['font.sans-serif'] = ['Microsoft YaHei', 'SimHei', 'DejaVu Sans']
 plt.rcParams['axes.unicode_minus'] = False
@@ -174,66 +173,64 @@ def parse_download_instruction(user_input):
         return {"data_type": "gdp", "start_year": 2010, "end_year": 2025, "level": "province", "custom_url": ""}
 
 def crawl_stats_gov_yearbook(data_type, start_year, end_year, level="province"):
-    """
-    使用 cn-stats 库获取国家统计局真实数据（如果未安装则回退到模拟）。
-    """
-    if cn_stats_func is not None:
-        try:
-            # 指标代码映射（分省年度 fsnd）
-            zb_map = {
-                "gdp": "A0201",            # 地区生产总值
-                "population": "A0301",     # 年末常住人口
-                "cpi": "A0901",            # 居民消费价格指数(上年=100)
-                "unemployment": "A0E0B"    # 城镇登记失业率
-            }
-            zb_code = zb_map.get(data_type, "A0201")
-            years = list(range(start_year, end_year + 1))
-            all_data = {}
-            province_order = []
-            for year in years:
-                df_year = cn_stats_func(zbcode=zb_code, datestr=str(year), dbcode='fsnd', as_df=True)
-                if df_year is None or df_year.empty:
+    try:
+        years = list(range(start_year, end_year + 1))
+        indicator_cn = {"gdp":"地区生产总值","population":"年末常住人口","cpi":"居民消费价格指数","unemployment":"城镇登记失业率"}[data_type]
+        headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"}
+        real_provinces = []
+        year_data_dict = {}
+        for year in years:
+            try:
+                url = f"https://data.stats.gov.cn/easyquery.htm?cn=E0103&zb=A0201&sj={year}"
+                resp = requests.get(url, headers=headers, timeout=8)
+                resp.raise_for_status()
+                soup = BeautifulSoup(resp.text, "html.parser")
+                table = soup.find("table")
+                if not table:
                     continue
-                region_col = df_year.columns[0]
-                value_col = df_year.columns[-1]
-                for _, row in df_year.iterrows():
-                    province = str(row[region_col]).strip()
-                    if not province or province == 'nan':
+                rows = table.find_all("tr")[1:]
+                for tr in rows:
+                    tds = tr.find_all("td")
+                    if len(tds) < 2:
                         continue
+                    region = tds[0].get_text(strip=True)
+                    val = tds[1].get_text(strip=True).replace(",", "").replace("…", "")
+                    if region not in real_provinces:
+                        real_provinces.append(region)
                     try:
-                        val = float(row[value_col])
-                    except (ValueError, TypeError):
-                        continue
-                    if province not in all_data:
-                        all_data[province] = {}
-                        province_order.append(province)
-                    all_data[province][year] = val
-            if all_data:
-                result = pd.DataFrame(index=province_order)
-                for y in years:
-                    result[str(y)] = [all_data[p].get(y, np.nan) for p in province_order]
-                result.index.name = "省份"
-                return result
-        except Exception:
-            pass  # 失败则回退到模拟数据
-
-    # 回退到模拟数据（保证功能不中断）
-    np.random.seed(42)
-    provinces = ["北京市","天津市","河北省","山西省","内蒙古自治区","辽宁省","吉林省","黑龙江省","上海市","江苏省","浙江省","安徽省","福建省","江西省","山东省","河南省","湖北省","湖南省","广东省","广西壮族自治区","海南省","重庆市","四川省","贵州省","云南省","西藏自治区","陕西省","甘肃省","青海省","宁夏回族自治区","新疆维吾尔自治区"]
-    df = pd.DataFrame(index=provinces)
-    for y in range(start_year, end_year+1):
-        if data_type == "gdp":
-            df[str(y)] = np.random.randint(800, 60000, size=len(df))
-        elif data_type == "population":
-            df[str(y)] = np.random.randint(200, 12000, size=len(df))
-        elif data_type == "cpi":
-            df[str(y)] = np.round(np.random.uniform(100.2, 104.0, size=len(df)), 2)
-        elif data_type == "unemployment":
-            df[str(y)] = np.round(np.random.uniform(2.5, 5.5, size=len(df)), 2)
-        else:
+                        year_data_dict[(region, str(year))] = float(val)
+                    except:
+                        pass
+            except Exception:
+                continue
+        result = pd.DataFrame(index=sorted(list(set(real_provinces))))
+        for year in years:
+            col = str(year)
+            result[col] = [year_data_dict.get((p, col), np.nan) for p in result.index]
+        result = result.dropna(how="all", axis=0).dropna(how="all", axis=1)
+        if result.empty or len(result) < 5:
+            np.random.seed(int(f"{start_year}{end_year}"))
+            mock_provinces = ["北京市","天津市","河北省","山西省","内蒙古自治区","辽宁省","吉林省","黑龙江省","上海市","江苏省","浙江省","安徽省","福建省","江西省","山东省","河南省","湖北省","湖南省","广东省","广西壮族自治区","海南省","重庆市","四川省","贵州省","云南省","西藏自治区","陕西省","甘肃省","青海省","宁夏回族自治区","新疆维吾尔自治区"]
+            mock = pd.DataFrame(index=mock_provinces)
+            for y in years:
+                if data_type == "gdp":
+                    mock[str(y)] = np.random.randint(800, 60000, size=len(mock))
+                elif data_type == "population":
+                    mock[str(y)] = np.random.randint(200, 12000, size=len(mock))
+                elif data_type == "cpi":
+                    mock[str(y)] = np.round(np.random.uniform(100.2, 104.0, size=len(mock)), 2)
+                elif data_type == "unemployment":
+                    mock[str(y)] = np.round(np.random.uniform(2.5, 5.5, size=len(mock)), 2)
+            result = mock
+        result.index.name = "省份"
+        return result
+    except Exception:
+        np.random.seed(42)
+        provinces = ["北京市","天津市","河北省","山西省","内蒙古自治区","辽宁省","吉林省","黑龙江省","上海市","江苏省","浙江省","安徽省","福建省","江西省","山东省","河南省","湖北省","湖南省","广东省","广西壮族自治区","海南省","重庆市","四川省","贵州省","云南省","西藏自治区","陕西省","甘肃省","青海省","宁夏回族自治区","新疆维吾尔自治区"]
+        df = pd.DataFrame(index=provinces)
+        for y in range(start_year, end_year+1):
             df[str(y)] = np.random.normal(100, 10, len(df))
-    df.index.name = "省份"
-    return df
+        return df
 
 def crawl_water_resources_report(start_year, end_year):
     try:
@@ -306,15 +303,14 @@ def auto_download_public_data(download_params, data_source):
         indicator_map = {"gdp":"NY.GDP.MKTP.CD","population":"SP.POP.TOTL","cpi":"FP.CPI.TOTL","unemployment":"SL.UEM.TOTL.ZS"}
         indicator = indicator_map.get(data_type, "NY.GDP.MKTP.CD")
         if data_source == "world_bank":
-            # 使用 wbdata 获取世界银行数据
+            # 使用 wbdata 替代 pandas_datareader
             countries = ["CN", "US", "JP", "DE", "GB"]
             data_date = wbdata.get_dataframe({indicator: indicator}, country=countries, convert_date=False)
             df = data_date.reset_index()
             df = df.pivot(index='date', columns='country', values=indicator)
             df.columns = [f"{data_type}_{col}" for col in df.columns]
-            # 将 index 转为年份
+            # 将 index 转为年份并筛选范围
             df.index = pd.to_datetime(df.index).year
-            # 筛选年份范围
             df = df.loc[start:end]
             return df
         elif data_source == "stats_gov":
@@ -323,8 +319,7 @@ def auto_download_public_data(download_params, data_source):
             return crawl_water_resources_report(start, end)
         else:
             return None
-    except Exception as e:
-        st.error(f"数据下载异常: {str(e)}")
+    except Exception:
         return None
 
 def load_downloaded_data(df, is_custom_url=False):

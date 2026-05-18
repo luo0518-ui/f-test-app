@@ -20,7 +20,7 @@ from matplotlib.patches import Rectangle, FancyArrowPatch
 from docx import Document
 from docx.shared import Inches
 import requests
-import wbdata   # 替换 pandas_datareader
+import wbdata
 from datetime import datetime
 from bs4 import BeautifulSoup
 import qrcode
@@ -47,26 +47,22 @@ TONGYI_API_KEY = "sk-177dec4a885641c78d59b80ce760fc42"
 BAIDU_API_KEY = "PkO9bqVFq2FYbMwIeOhMufL7"
 BAIDU_SECRET_KEY = "FLqwOluo1nitH340O66CvygthuKfmeim"
 
-# ==================== 中文字体设置（增强兼容性） ====================
-# 在 Streamlit Cloud 环境中确保中文正常显示
-try:
-    import matplotlib.font_manager as fm
-    # 查找系统中支持中文的字体
-    chinese_fonts = ['WenQuanYi Zen Hei', 'Noto Sans CJK SC', 'Noto Sans CJK TC', 
-                     'SimHei', 'Microsoft YaHei', 'DejaVu Sans']
-    available_fonts = [f.name for f in fm.fontManager.ttflist]
-    for font in chinese_fonts:
-        if font in available_fonts:
-            plt.rcParams['font.sans-serif'] = [font]
-            break
-    else:
-        # 如果没有找到中文字体，使用默认并添加后备
-        plt.rcParams['font.sans-serif'] = ['DejaVu Sans'] + chinese_fonts
-except:
-    # 如果出错，回退到原有设置
-    plt.rcParams['font.sans-serif'] = ['Microsoft YaHei', 'SimHei', 'DejaVu Sans']
+# ========== 中文字体配置（修复方框问题）==========
+import matplotlib.font_manager as fm
+# 查找系统中支持中文的字体
+chinese_fonts = []
+for f in fm.fontManager.ttflist:
+    name = f.name
+    if any(keyword in name for keyword in ['CJK', 'WenQuanYi', 'Noto', 'SimHei', 'Microsoft YaHei', 'SimSun', 'FangSong', 'KaiTi']):
+        chinese_fonts.append(name)
+if chinese_fonts:
+    # 优先使用找到的中文字体，并保留后备英文字体
+    plt.rcParams['font.sans-serif'] = chinese_fonts + ['DejaVu Sans', 'Arial', 'sans-serif']
+else:
+    # 若找不到，使用默认字体（可能仍是方框，但至少不报错）
+    plt.rcParams['font.sans-serif'] = ['DejaVu Sans', 'Arial', 'sans-serif']
 plt.rcParams['axes.unicode_minus'] = False
-# ================================================================
+# =============================================
 
 llm = ChatTongyi(api_key=TONGYI_API_KEY, model_name="qwen-turbo", temperature=0.1)
 
@@ -321,13 +317,11 @@ def auto_download_public_data(download_params, data_source):
         indicator_map = {"gdp":"NY.GDP.MKTP.CD","population":"SP.POP.TOTL","cpi":"FP.CPI.TOTL","unemployment":"SL.UEM.TOTL.ZS"}
         indicator = indicator_map.get(data_type, "NY.GDP.MKTP.CD")
         if data_source == "world_bank":
-            # 使用 wbdata 替代 pandas_datareader
             countries = ["CN", "US", "JP", "DE", "GB"]
             data_date = wbdata.get_dataframe({indicator: indicator}, country=countries, convert_date=False)
             df = data_date.reset_index()
             df = df.pivot(index='date', columns='country', values=indicator)
             df.columns = [f"{data_type}_{col}" for col in df.columns]
-            # 将 index 转为年份并筛选范围
             df.index = pd.to_datetime(df.index).year
             df = df.loc[start:end]
             return df
